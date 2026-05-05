@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
-# Patch Armbian's build framework to work around the rust-coreutils chroot
-# panic on aarch64 hosts whose vendor BSP kernel auxv handling does not
-# satisfy rustix.
+# Patch Armbian's build framework with the fixes needed for a working
+# Ubuntu 26.04 image on the Orange Pi 5 Pro:
 #
-# DEPLOY (lib/functions/rootfs/create-cache.sh):
-#   Right after rootfs cache extraction, before the first chroot operation,
-#   replace the /usr/bin/* symlinks that point at /lib/cargo/bin/coreutils/*
-#   with a small shell shim that routes through qemu-user-static. qemu sets
-#   up its own auxv so rustix is happy. /bin/sh itself is not part of uutils
-#   so the shim runs natively.
+# 1) DEPLOY shim (lib/functions/rootfs/create-cache.sh):
+#    Replace /usr/bin/* uutils symlinks with a shell shim routing through
+#    qemu-aarch64-static, so chroot operations don't hit the rust-coreutils
+#    auxv panic on Rockchip vendor BSP kernels.
 #
-# RESTORE (lib/functions/main/rootfs-image.sh):
-#   After all chroot operations are done, before the rootfs is unmounted,
-#   restore the original /usr/bin/* -> /lib/cargo/bin/coreutils/* symlinks
-#   and remove the shim + qemu-aarch64-static. Final image ships clean
-#   uutils so there is no qemu emulation overhead at runtime.
+# 2) RESTORE shim (lib/functions/main/rootfs-image.sh):
+#    Reverse the swap before image creation so the final image ships clean
+#    uutils with no runtime emulation overhead.
 #
-# Idempotent: re-running is a no-op if the patches are already applied.
-# Pass FRAMEWORK_DIR env var to override the default location.
+# 3) BOOT-DELAY (lib/functions/rootfs/distro-agnostic.sh):
+#    Append `rootwait rootdelay=10` to the kernel cmdline via armbianEnv.txt.
+#    First-boot SD enumeration on RK3588 is racy; without this, initramfs
+#    can hit "cannot mount root fs" on the first boot before the SD
+#    controller finishes settling.
+#
+# All three are idempotent. Override location with FRAMEWORK_DIR env var.
 set -euo pipefail
 
 FRAMEWORK_DIR="${FRAMEWORK_DIR:-$HOME/armbian-build/framework}"
@@ -25,10 +25,13 @@ cd "$FRAMEWORK_DIR"
 
 deploy_target=lib/functions/rootfs/create-cache.sh
 restore_target=lib/functions/main/rootfs-image.sh
+bootdelay_target=lib/functions/rootfs/distro-agnostic.sh
 
 deploy_needle='	create_sources_list_and_deploy_repo_key "image-early" "${RELEASE}" "${SDCARD}/"'
 restore_needle='	LOG_SECTION="undeploy_qemu_binary_from_chroot_image" do_with_logging undeploy_qemu_binary_from_chroot "${SDCARD}" "image"'
+bootdelay_needle='			run_host_command_logged echo "fdtfile=${BOOT_FDT_FILE}" ">>" "${SDCARD}/boot/armbianEnv.txt"'
 
+# --- 1) DEPLOY ---
 if grep -q 'uutils-qemu-shim' "$deploy_target"; then
     echo "deploy: already patched"
 else
@@ -64,15 +67,12 @@ else
         { print }
     ' "$deploy_target" > "${deploy_target}.new"
 
-    if ! grep -q 'uutils-qemu-shim' "${deploy_target}.new"; then
-        echo "deploy patch failed: needle not matched in ${deploy_target}" >&2
-        rm -f "${deploy_target}.new"
-        exit 1
-    fi
+    grep -q 'uutils-qemu-shim' "${deploy_target}.new" || { echo "deploy patch failed: needle not matched in ${deploy_target}" >&2; rm -f "${deploy_target}.new"; exit 1; }
     mv "${deploy_target}.new" "$deploy_target"
     echo "deploy: patched"
 fi
 
+# --- 2) RESTORE ---
 if grep -q 'uutils-shim-restore' "$restore_target"; then
     echo "restore: already patched"
 else
@@ -96,11 +96,40 @@ else
         { print }
     ' "$restore_target" > "${restore_target}.new"
 
-    if ! grep -q 'uutils-shim-restore' "${restore_target}.new"; then
-        echo "restore patch failed: needle not matched in ${restore_target}" >&2
-        rm -f "${restore_target}.new"
-        exit 1
-    fi
+    grep -q 'uutils-shim-restore' "${restore_target}.new" || { echo "restore patch failed: needle not matched in ${restore_target}" >&2; rm -f "${restore_target}.new"; exit 1; }
     mv "${restore_target}.new" "$restore_target"
     echo "restore: patched"
+fi
+
+# --- 3) BOOT-DELAY ---
+if grep -q 'rk3588-boot-delay' "$bootdelay_target"; then
+    echo "boot-delay: already patched"
+else
+    awk -v needle="$bootdelay_needle" '
+        { print }
+        seen && $0 ~ /^\t\tfi$/ && !done {
+            print ""
+            print "\t\t# --- BEGIN rk3588-boot-delay ---"
+            print "\t\t# Append rootwait + rootdelay to the kernel cmdline. Without this the"
+            print "\t\t# RK3588 SD controller can lose a race with initramfs root mount on the"
+            print "\t\t# very first boot, dropping the user at (initramfs) with \"cannot mount\""
+            print "\t\t# root fs\". Subsequent boots are usually fine, but baking these in makes"
+            print "\t\t# the first boot reliable too."
+            print "\t\tif [[ -f \"${SDCARD}/boot/armbianEnv.txt\" ]]; then"
+            print "\t\t\tif grep -q \"^extraargs=\" \"${SDCARD}/boot/armbianEnv.txt\"; then"
+            print "\t\t\t\tsed -i \"s|^extraargs=\\(.*\\)$|extraargs=\\1 rootwait rootdelay=10|\" \"${SDCARD}/boot/armbianEnv.txt\""
+            print "\t\t\telse"
+            print "\t\t\t\techo \"extraargs=rootwait rootdelay=10\" >> \"${SDCARD}/boot/armbianEnv.txt\""
+            print "\t\t\tfi"
+            print "\t\t\tdisplay_alert \"Boot-delay applied to armbianEnv.txt\" \"rootwait rootdelay=10\" \"info\""
+            print "\t\tfi"
+            print "\t\t# --- END rk3588-boot-delay ---"
+            seen = 0; done = 1
+        }
+        $0 == needle { seen = 1 }
+    ' "$bootdelay_target" > "${bootdelay_target}.new"
+
+    grep -q 'rk3588-boot-delay' "${bootdelay_target}.new" || { echo "boot-delay patch failed: needle not matched in ${bootdelay_target}" >&2; rm -f "${bootdelay_target}.new"; exit 1; }
+    mv "${bootdelay_target}.new" "$bootdelay_target"
+    echo "boot-delay: patched"
 fi
