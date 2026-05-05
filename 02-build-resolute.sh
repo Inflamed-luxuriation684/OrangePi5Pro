@@ -4,12 +4,16 @@
 # Orange Pi vendor Ubuntu 22.04 — that kernel lacks CONFIG_BINFMT_MISC and the
 # rust-coreutils chroot panic workaround can't deploy qemu-user-static.
 #
-# Defaults to BRANCH=current (mainline 6.18+ kernel) for working GPU
-# acceleration via the panthor + Mesa panvk drivers. Set BRANCH=vendor in the
-# environment if you specifically need the Rockchip BSP (NPU access, vendor
-# MPP video accel) — the result will be Plasma-usable but software-rendered
-# only, since the BSP's built-in mali_kbase claims the GPU and prevents
-# panfrost/panthor from binding. See https://github.com/mack42/OrangePi5Pro/issues/1
+# Usage:
+#   ./02-build-resolute.sh                  # minimal CLI image (default)
+#   ./02-build-resolute.sh --desktop        # with KDE Plasma + SDDM
+#   DESKTOP=yes ./02-build-resolute.sh      # same via env var
+#   BRANCH=vendor ./02-build-resolute.sh    # use Rockchip BSP (no GPU accel — see issue #1)
+#
+# Defaults to BRANCH=current (mainline ~6.18 kernel) for working GPU
+# acceleration via panthor + Mesa panvk. Set BRANCH=vendor in the environment
+# only if you specifically need the Rockchip BSP (NPU access, vendor MPP video
+# accel) — the result will be Plasma-usable but software-rendered only.
 #
 # A small patch (apply-uutils-shim.sh) swaps rust-coreutils symlinks for a
 # qemu-user-static shim during the build and restores them before image
@@ -19,7 +23,20 @@
 
 set -euo pipefail
 
+DESKTOP="${DESKTOP:-no}"
 BRANCH="${BRANCH:-current}"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --desktop)    DESKTOP=yes; shift ;;
+        --no-desktop) DESKTOP=no; shift ;;
+        --branch=*)   BRANCH="${1#*=}"; shift ;;
+        -h|--help)
+            sed -n '2,16p' "$0" | sed 's/^# \?//'
+            exit 0 ;;
+        *) echo "Unknown arg: $1" >&2; exit 1 ;;
+    esac
+done
 
 config_file="/boot/config-$(uname -r)"
 if [[ -r "$config_file" ]] && grep -qE '^# CONFIG_BINFMT_MISC is not set' "$config_file"; then
@@ -46,12 +63,29 @@ FRAMEWORK_DIR="${WORK}/framework" "${script_dir}/apply-uutils-shim.sh"
 
 cd framework
 
-exec ./compile.sh \
-    BOARD=orangepi5pro \
-    BRANCH="$BRANCH" \
-    RELEASE=resolute \
-    BUILD_MINIMAL=yes \
-    BUILD_DESKTOP=no \
-    KERNEL_CONFIGURE=no \
-    COMPRESS_OUTPUTIMAGE=sha,xz \
-    EXPERT=yes
+# Build args differ slightly for desktop vs minimal.
+if [[ "$DESKTOP" == "yes" ]]; then
+    echo ">>> Building DESKTOP image (KDE Plasma + SDDM). Expect ~30-45 min and ~2 GB output."
+    exec ./compile.sh \
+        BOARD=orangepi5pro \
+        BRANCH="$BRANCH" \
+        RELEASE=resolute \
+        BUILD_DESKTOP=yes \
+        BUILD_MINIMAL=no \
+        DESKTOP_ENVIRONMENT=kde-plasma \
+        DESKTOP_APPGROUPS_SELECTED="" \
+        KERNEL_CONFIGURE=no \
+        COMPRESS_OUTPUTIMAGE=sha,xz \
+        EXPERT=yes
+else
+    echo ">>> Building MINIMAL image (CLI). Expect ~8-15 min and ~300 MB output."
+    exec ./compile.sh \
+        BOARD=orangepi5pro \
+        BRANCH="$BRANCH" \
+        RELEASE=resolute \
+        BUILD_MINIMAL=yes \
+        BUILD_DESKTOP=no \
+        KERNEL_CONFIGURE=no \
+        COMPRESS_OUTPUTIMAGE=sha,xz \
+        EXPERT=yes
+fi

@@ -92,14 +92,19 @@ SSH into the booted 24.04 system, then:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y git docker.io qemu-user-static binfmt-support
+sudo apt-get install -y git docker.io qemu-user qemu-user-binfmt binfmt-support
 sudo usermod -aG docker "$USER" && newgrp docker
 git clone https://github.com/mack42/OrangePi5Pro.git
 cd OrangePi5Pro
+
+# Minimal CLI image (~8-15 min, ~300 MB):
 ./02-build-resolute.sh
+
+# OR — KDE Plasma desktop image (~30-45 min, ~2 GB):
+./02-build-resolute.sh --desktop
 ```
 
-`02-build-resolute.sh` clones Armbian's build framework, applies `apply-uutils-shim.sh` (idempotent — the deploy/restore patch described above), and invokes `compile.sh` with **`BRANCH=current`** by default. Armbian's CI publishes prebuilt `current` kernel debs (~6.18.x mainline-rockchip64), so the first run downloads the kernel from `ghcr.io` instead of compiling — total build time around 8-15 min on this hardware. (If you set `BRANCH=vendor` instead, see the GPU caveat below — and note the kernel will compile from source if not in the remote cache.)
+`02-build-resolute.sh` clones Armbian's build framework, applies `apply-uutils-shim.sh` (idempotent — the deploy/restore patch described above), and invokes `compile.sh` with **`BRANCH=current`** by default. Armbian's CI publishes prebuilt `current` kernel debs (~6.18.x mainline-rockchip64), so the first run downloads the kernel from `ghcr.io` instead of compiling — keeping the minimal build under ~15 min. (Override with `BRANCH=vendor` only if you specifically need the BSP — see the GPU caveat below.)
 
 Output:
 
@@ -119,9 +124,36 @@ sudo umount /mnt && sudo losetup -d "$LOOP"
 
 ## Step 4 — Flash 26.04
 
-Same flashing procedure as Step 2, just point at the resolute `.img.xz`.
+Same flashing procedure as Step 2, just point at the resolute `.img.xz`. **balenaEtcher** is the only writer that's reliably worked through this whole project; avoid Rufus and Pi Imager.
 
-If you want 26.04 on **eMMC** (replacing your stock OPi 22.04), boot the SD-card 26.04 image first, log in, then run Armbian's `armbian-install` to mirror to eMMC. Test boot from microSD before committing to eMMC — flashing eMMC is a one-way trip without serial recovery tools.
+## Step 5 — Post-boot setup (Plasma / auto-start UI / NVMe)
+
+The minimal image lands you at a CLI login. The desktop image goes straight to SDDM. Either way, log in and run:
+
+```bash
+git clone https://github.com/mack42/OrangePi5Pro.git
+cd OrangePi5Pro
+./03-setup.sh
+```
+
+`03-setup.sh` walks through four prompts and applies your answers:
+
+1. **Install KDE Plasma desktop?** — skipped if already there. Adds ~2 GB.
+2. **Auto-start the UI on boot?** — toggles between `graphical.target` (boots into SDDM/Plasma) and `multi-user.target` (boots to text console).
+3. **Migrate root filesystem to NVMe?** — calls Armbian's `armbian-install` to copy the running rootfs onto an NVMe SSD if one's plugged in.
+4. **Put u-boot in SPI flash?** — only asked if (3) is yes. Choose YES for **pure-NVMe operation, no SD card needed after**. Choose NO to keep u-boot on the SD card and treat NVMe as just the rootfs.
+
+Each step is independent — answer "no" to skip. The script is re-runnable: change your mind later, run it again.
+
+### NVMe boot configurations
+
+The OPi 5 Pro's RK3588S boot ROM doesn't read u-boot directly from NVMe; u-boot has to come from SPI flash, eMMC, microSD, or USB. So you have three working setups:
+
+| Setup | u-boot location | Rootfs location | Tradeoffs |
+|---|---|---|---|
+| **Pure NVMe** *(answer YES to step 4)* | SPI flash | NVMe | Cleanest. SD card can be removed. SPI write is one-way without [rkdeveloptool maskrom recovery](https://opensource.rock-chips.com/wiki_Rkdeveloptool). |
+| **SD bootloader + NVMe rootfs** *(answer NO to step 4)* | microSD (small) | NVMe | Easy to recover (just edit/replace SD). SD slot stays occupied. |
+| **eMMC bootloader + NVMe rootfs** *(advanced — choose in armbian-install)* | eMMC | NVMe | No SD slot used. Replaces stock OPi 22.04 on eMMC — irreversible without reflash. |
 
 ## GPU acceleration / kernel branch choice
 
@@ -139,8 +171,9 @@ This is the most important practical decision and it's why the recipe defaults t
 
 ## Caveats
 
-- These recipes use `BUILD_MINIMAL=yes BUILD_DESKTOP=no`. To build a desktop image, swap to `BUILD_DESKTOP=yes BUILD_MINIMAL=no DESKTOP_ENVIRONMENT=xfce` (or `gnome`). Or install your DE of choice on the minimal image post-boot (e.g. `sudo apt install kubuntu-desktop` for KDE Plasma).
+- The `02-build-resolute.sh` script defaults to a minimal CLI image. Pass `--desktop` for an image with KDE Plasma + SDDM baked in, or use the post-boot `03-setup.sh` to install Plasma after first boot — both reach the same end state.
 - Each system's Armbian build cache is independent. The first build on a fresh host pulls a ~2 GB Docker base image and clones a kernel tree (~1-2 GB). Subsequent builds reuse those.
+- HW video decode (`rkvdec` etc.) on mainline 6.18: the kernel exposes V4L2 nodes for H.264 / HEVC / VP9 / AV1 decoders, but the userspace stack (`librockchip-mpp`, patched ffmpeg, libva backend) **isn't packaged for resolute aarch64 yet**. Software decode works; hardware decode is a separate research effort. Tracked in [issue #1](https://github.com/mack42/OrangePi5Pro/issues/1).
 
 ## Troubleshooting
 
