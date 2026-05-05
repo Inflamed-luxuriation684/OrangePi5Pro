@@ -102,7 +102,7 @@ mkdir -p /tmp/hwvideo && cd /tmp/hwvideo
 
 # librockchip-mpp
 git clone --depth=1 https://github.com/rockchip-linux/mpp.git
-( cd mpp && mkdir build && cd build && \
+( cd mpp && mkdir -p build && cd build && \
   cmake -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_BUILD_TYPE=Release -DBUILD_TEST=OFF .. && \
   make -j"$(nproc)" && \
   make install )
