@@ -142,7 +142,8 @@ cd OrangePi5Pro
 2. **Auto-start the UI on boot?** — toggles between `graphical.target` (boots into SDDM/Plasma) and `multi-user.target` (boots to text console).
 3. **Migrate root filesystem to NVMe?** — calls Armbian's `armbian-install` to copy the running rootfs onto an NVMe SSD if one's plugged in.
 4. **Put u-boot in SPI flash?** — only asked if (3) is yes. Choose YES for **pure-NVMe operation, no SD card needed after**. Choose NO to keep u-boot on the SD card and treat NVMe as just the rootfs.
-5. **Install hardware video decode?** — builds [`librockchip-mpp`](https://github.com/rockchip-linux/mpp) + [`woodyst/rockchip-vaapi`](https://github.com/woodyst/rockchip-vaapi) from source, drops a VA-API driver into `/usr/lib/aarch64-linux-gnu/dri/rockchip_drv_video.so` so Firefox / Brave / mpv can hardware-decode H.264 / HEVC / VP9 / AV1 via the RK3588 VPU. Takes 15-25 min on this hardware.
+5. **Install hardware video decode?** — builds [`librockchip-mpp`](https://github.com/rockchip-linux/mpp) + [`woodyst/rockchip-vaapi`](https://github.com/woodyst/rockchip-vaapi) from source, drops a VA-API driver into `/usr/lib/aarch64-linux-gnu/dri/rockchip_drv_video.so` so Firefox / Brave / mpv can hardware-decode H.264 / HEVC / VP9 / AV1 via the RK3588 VPU. Takes 15-25 min on this hardware. **Skipped automatically if installed already — desktop image variant has it baked in.**
+6. **Compensate for HDMI overscan?** — only relevant if your TV crops the edges of the text console. The proper fix is on the TV (look for "Just Scan" / "PC mode" / "Pixel Perfect"). The workaround here adds `video=HDMI-A-1:1880x1040@60` to the kernel cmdline in `armbianEnv.txt`, costing ~80 px of effective resolution. Skip if your monitor maps pixels 1:1.
 
 Each step is independent — answer "no" to skip. The script is re-runnable: change your mind later, run it again.
 
