@@ -4,7 +4,7 @@ A working recipe to build and run **Ubuntu 26.04 LTS (Resolute Raccoon)** on the
 
 As of May 2026 there is no off-the-shelf 26.04 image for this board. [Joshua Riek's `ubuntu-rockchip`](https://github.com/Joshua-Riek/ubuntu-rockchip) was archived on 29 April 2026, [Armbian's downloads page for the 5 Pro](https://www.armbian.com/orange-pi-5-pro/) only ships Debian Trixie, and Orange Pi's official downloads top out at 24.04. So we build it ourselves.
 
-## Why this is two builds, not one
+## Why this is two builds plus a patch
 
 Ubuntu 26.04 ships **`rust-coreutils` (uutils)** as the default coreutils. The uutils binaries use `rustix`, which crashes during startup with:
 
@@ -13,22 +13,28 @@ thread 'main' panicked at rustix/.../auxv.rs:269:
 called `Result::unwrap()` on an `Err` value: ()
 ```
 
-…whenever invoked from a `chroot` whose host kernel was built without `CONFIG_BINFMT_MISC`. Orange Pi's stock vendor kernel (`6.1.43-rockchip-rk3588`) has it disabled, with no loadable module on disk:
+…whenever launched through `chroot` on certain Rockchip vendor kernels. Tested on both `6.1.43-rockchip-rk3588` (stock OPi vendor) and `6.1.115-vendor-rk35xx` (Armbian vendor); both panic. The very first chroot operation in Armbian's build (linking `armbian-archive-keyring.gpg` into `/usr/share/keyrings/`) hits this and the build dies.
 
-```
-$ grep BINFMT_MISC /boot/config-$(uname -r)
-# CONFIG_BINFMT_MISC is not set
-```
+Two layers of problem stack on top of that:
 
-So Armbian's normal qemu-shielding can't engage during the resolute rootfs assembly. The very first chroot operation (linking `armbian-archive-keyring.gpg` into `/usr/share/keyrings/`) panics inside `uutils` and the build dies.
+1. **Stock OPi 22.04 kernel doesn't have `CONFIG_BINFMT_MISC` at all** — not built-in, no module on disk:
+   ```
+   $ grep BINFMT_MISC /boot/config-$(uname -r)
+   # CONFIG_BINFMT_MISC is not set
+   ```
+   So you can't even register `qemu-aarch64` for binfmt-misc routing. Armbian's build can't shim around the uutils panic.
+2. **Even on Armbian's 6.1.115 vendor kernel** (which has `CONFIG_BINFMT_MISC=m`), Armbian's build framework explicitly skips qemu setup on native-arch builds (`if dpkg-architecture -e "${ARCH}"; then return 0`), so `qemu-aarch64-static` is never deployed into the chroot, and uutils panics anyway.
 
-Armbian's **`6.1.115-vendor-rk35xx`** kernel, by contrast, ships `CONFIG_BINFMT_MISC=m`. Once you boot from an Armbian image, `qemu-user-static` auto-routing works and the 26.04 build succeeds.
+The recipe therefore needs two components:
+
+1. **A 24.04 (noble) stepping-stone image** so we can boot a kernel with `CONFIG_BINFMT_MISC` available. Noble itself uses GNU coreutils, so Step 1 of the build doesn't hit the uutils panic.
+2. **A small patch (`apply-uutils-shim.sh`)** for the resolute build that swaps the `/usr/bin/*` uutils symlinks for a tiny shell shim routing through `qemu-aarch64-static`, then restores the original symlinks after all chroot operations are done. The final 26.04 image ships clean uutils — no qemu emulation at runtime.
 
 So the recipe is:
 
-1. **Build Armbian Ubuntu 24.04 (noble)** on the stock Orange Pi vendor system. Noble uses GNU coreutils — no uutils, no panic. (~3-5 h on this hardware)
-2. **Flash 24.04 to microSD, boot from it.** That kernel has the `binfmt_misc` support we need.
-3. **Build Armbian Ubuntu 26.04 (resolute)** from the booted 24.04 system. (~4-6 h)
+1. **Build Armbian Ubuntu 24.04 (noble)** on the stock Orange Pi vendor system. (~3-5 h cold; ~3 min with caches)
+2. **Flash 24.04 to microSD, boot from it.**
+3. **Build Armbian Ubuntu 26.04 (resolute)** from the booted 24.04 system. `02-build-resolute.sh` applies the patch automatically. (~4-6 h cold; ~7-10 min with caches)
 4. Flash 26.04 wherever you want it (microSD, USB SSD, eMMC).
 
 ## Prerequisites
@@ -89,10 +95,22 @@ cd OrangePi5Pro
 ./02-build-resolute.sh
 ```
 
+`02-build-resolute.sh` clones Armbian's build framework, applies `apply-uutils-shim.sh` (idempotent — the deploy/restore patch described above), and invokes `compile.sh`. The first run rebuilds the kernel from source (~1.5-3 h on this hardware); subsequent runs reuse the cached kernel deb and finish in ~7-10 min.
+
 Output:
 
 ```
 ~/armbian-build/framework/output/images/Armbian-*_Orangepi5pro_resolute_vendor_*.img.xz
+```
+
+Verify it's actually 26.04:
+
+```bash
+xz -dkc <image>.img.xz | sudo dd of=/tmp/work.img bs=4M status=none
+LOOP=$(sudo losetup -fP --show /tmp/work.img)
+sudo mount -o ro "${LOOP}p1" /mnt
+grep VERSION /mnt/etc/os-release
+sudo umount /mnt && sudo losetup -d "$LOOP"
 ```
 
 ## Step 4 — Flash 26.04
@@ -111,7 +129,9 @@ If you want 26.04 on **eMMC** (replacing your stock OPi 22.04), boot the SD-card
 
 ### `rust-coreutils ... auxv.rs:269 panicked` during keyring setup
 
-You're trying to build 26.04 from a host without `CONFIG_BINFMT_MISC`. Don't — do Step 1 first. Confirm the kernel:
+Means the patch wasn't applied. Either you're on a host without `CONFIG_BINFMT_MISC` (do Step 1 first; `02-build-resolute.sh` will refuse to run on such a kernel) or you ran `compile.sh` directly without `apply-uutils-shim.sh`. Re-run `./02-build-resolute.sh`, which applies the patch idempotently before invoking `compile.sh`.
+
+Confirm the kernel:
 
 ```bash
 grep BINFMT_MISC "/boot/config-$(uname -r)"
@@ -135,7 +155,9 @@ The build died. The last ~100 lines of `~/armbian-build/build.log` say why. Comm
 
 ### Kernel build is unbearably slow
 
-Cortex-A76 at 2.35 GHz × 4 + A55 × 4 is roughly half a low-end x86 desktop. Allow 1.5-3 hours for the kernel alone. Run the build on an x86 host if you have one — same `compile.sh`, same flags; binfmt-misc + qemu-aarch64 are auto-routed there and the resolute build works in one shot (no stepping stone needed).
+Cortex-A76 at 2.35 GHz × 4 + A55 × 4 is roughly half a low-end x86 desktop. Allow 1.5-3 hours for the kernel compile on a cold first build. Re-builds reuse the kernel deb from `output/debs/` and finish in ~7-10 minutes.
+
+If you have an x86 host, build there instead — same `compile.sh`, same flags; binfmt-misc + qemu-aarch64 are auto-routed cross-arch on x86 and the resolute build works in one shot (no stepping stone, no patch). The patch in this repo is only needed when host and target are both aarch64.
 
 ## What this repo is not
 
