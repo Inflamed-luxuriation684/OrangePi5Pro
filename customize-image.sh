@@ -78,15 +78,32 @@ cat > /etc/profile.d/orangepi-firstrun.sh <<'PROF'
 case "$(tty 2>/dev/null)" in
     /dev/tty[0-9]*)
         if [ "$(id -u)" -ne 0 ] && [ ! -e "$HOME/.opi5pro-setup-done" ]; then
+            # Disable console blanking + DPMS so the user actually sees the
+            # prompts. Otherwise the monitor times out into power-save during
+            # the brief gap after armbian-firstrun completes and the user
+            # thinks the system hung.
+            setterm -blank 0 -powersave off -powerdown 0 2>/dev/null || true
             touch "$HOME/.opi5pro-setup-done"
-            echo "First-login setup helper. Re-run later with: orangepi-setup"
-            echo
+            clear
+            echo "============================================================"
+            echo "  Orange Pi 5 Pro — first-login setup helper"
+            echo "  Re-run later any time with: orangepi-setup"
+            echo "============================================================"
+            sleep 2
             /usr/local/bin/orangepi-setup || true
         fi
         ;;
 esac
 PROF
 chmod +x /etc/profile.d/orangepi-firstrun.sh
+
+# Belt-and-suspenders: also disable console blanking globally so even non-hook
+# TTYs don't power-save during long-running operations.
+if [ -f /boot/armbianEnv.txt ]; then
+    if ! grep -q "consoleblank=0" /boot/armbianEnv.txt; then
+        sed -i 's|^extraargs=\(.*\)$|extraargs=\1 consoleblank=0|' /boot/armbianEnv.txt
+    fi
+fi
 
 apt-get clean
 exit 0
