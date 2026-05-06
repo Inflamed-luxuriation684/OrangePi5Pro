@@ -198,16 +198,26 @@ Both images land you at a **TTY login** for `armbian-firstrun` (set root passwor
 
 ### Desktop image — Plasma kdialog wizard
 
-After firstrun and reboot, the desktop image boots straight into SDDM. Log in to Plasma; a **kdialog setup wizard** auto-launches:
+After firstrun, `armbian-firstlogin` starts SDDM and the desktop image lands you in Plasma. A boot-time service (`orangepi-graphical-default.service`) flips `default.target` to `graphical.target` automatically once firstlogin is complete, so **every reboot lands in Plasma from then on**. (You can opt out via the wizard or with `sudo systemctl set-default multi-user.target` for headless / server use.)
 
-- Auto-start Plasma on every boot (`graphical.target` vs `multi-user.target`)
+A **kdialog setup wizard** auto-launches once on first Plasma login (or run it manually from the application launcher / `orangepi-setup-gui`):
+
+- Auto-start Plasma on every boot — the new default; choose No to disable
 - Migrate root filesystem to NVMe — opens a terminal running `armbian-install`
 - Put u-boot in SPI flash (asked only if NVMe migration is yes)
 - HDMI overscan workaround (skip if your monitor maps pixels 1:1)
 
-The wizard touches `~/.opi5pro-setup-done` on completion so it doesn't pop up again. Re-run any time from the application launcher (**"Orange Pi 5 Pro Setup"**) or by running `orangepi-setup-gui` in a terminal. Plasma + HW video decode are baked into the image, so those prompts are skipped.
+The autostart shim touches `~/.opi5pro-setup-done` immediately on first launch so the wizard auto-fires *exactly once* — closing it without finishing won't trigger it on the next login. Re-run manually any time from the application launcher (**"Orange Pi 5 Pro Setup"**) or by running `orangepi-setup-gui` in a terminal — neither path checks the flag. Plasma + HW video decode are baked into the image, so those prompts are skipped.
 
-You can also run the TTY version (`orangepi-setup`) over SSH or from the text console — both write to the same flag file.
+You can also run the TTY version (`orangepi-setup`) over SSH or from the text console — both front-ends share the same flag.
+
+If you ever land at TTY (e.g., you opted out of auto-start), the motd tip shows you how to bring Plasma back up:
+
+```
+  Plasma desktop is not running.
+  Start it now:                 sudo systemctl start sddm
+  Boot into Plasma every time:  sudo systemctl set-default graphical.target
+```
 
 ### Minimal image — TTY `orangepi-setup`
 

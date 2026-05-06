@@ -87,6 +87,62 @@ install -m 0644 /usr/local/share/OrangePi5Pro/orangepi-setup-gui.desktop \
 install -m 0644 /usr/local/share/OrangePi5Pro/orangepi-setup-gui-launcher.desktop \
     /usr/share/applications/orangepi-setup-gui.desktop
 
+# --- 3b. Default to graphical.target after armbian-firstlogin ---
+# The image has to ship with default.target = multi-user.target so the
+# very first boot reaches a TTY where /etc/profile.d/armbian-check-first-
+# login.sh can run armbian-firstlogin (root pw, user creation, locale —
+# SDDM can't host that wizard without an existing user account). Without
+# any further intervention, every reboot AFTER firstlogin would also
+# land at TTY, which is wrong for a desktop image.
+#
+# Drop a oneshot service that runs at boot AFTER multi-user.target. Its
+# conditions only pass once firstlogin has completed (Armbian removes
+# /root/.not_logged_in_yet at that point) and we haven't already done
+# this work (sentinel /etc/.opi5pro-graphical-default-set). When it
+# fires, it flips default.target to graphical.target so subsequent boots
+# land in Plasma. Idempotent + self-marking.
+#
+# This is *belt-and-suspenders* — the kdialog wizard's prompt #1 also
+# offers the same flip in-session. Both paths are needed because:
+#   - The wizard requires the user to actually click through it.
+#   - The boot service catches users who never run the wizard.
+# set-default is just a symlink swap so doing it twice is harmless.
+cat > /etc/systemd/system/orangepi-graphical-default.service <<'GRSERVICE'
+[Unit]
+Description=Orange Pi 5 Pro: default to graphical.target after firstlogin
+ConditionPathExists=!/root/.not_logged_in_yet
+ConditionPathExists=!/etc/.opi5pro-graphical-default-set
+ConditionPathExists=/usr/bin/sddm
+After=multi-user.target armbian-firstrun.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c "systemctl set-default graphical.target && touch /etc/.opi5pro-graphical-default-set"
+
+[Install]
+WantedBy=multi-user.target
+GRSERVICE
+systemctl enable orangepi-graphical-default.service
+
+# --- 3c. motd tip: how to start Plasma when at TTY ---
+# Fires only when (a) we're a desktop image (sddm exists) and (b) sddm
+# isn't currently running (user is at TTY or SSH'd in with no GUI up).
+# Helps users who chose "no" to the wizard's auto-start prompt or who
+# Ctrl+Alt+F1'd out of Plasma and want to know how to get back.
+cat > /etc/update-motd.d/97-orangepi-plasma-tip <<'TIP'
+#!/bin/sh
+[ -x /usr/bin/sddm ] || exit 0
+systemctl is-active sddm.service >/dev/null 2>&1 && exit 0
+cat <<EOF
+  Plasma desktop is not running.
+  Start it now:                 sudo systemctl start sddm
+  Boot into Plasma every time:  sudo systemctl set-default graphical.target
+
+EOF
+TIP
+chmod +x /etc/update-motd.d/97-orangepi-plasma-tip
+
 # Belt-and-suspenders: also disable console blanking globally so even non-hook
 # TTYs don't power-save during long-running operations.
 if [ -f /boot/armbianEnv.txt ]; then
