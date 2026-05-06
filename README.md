@@ -6,7 +6,23 @@ As of May 2026 there is no off-the-shelf 26.04 image for this board. [Joshua Rie
 
 ## Just want the image?
 
-Skip everything below and grab a prebuilt 26.04 image from the [latest release page](https://github.com/mack42/OrangePi5Pro/releases/latest) — flash it with [balenaEtcher](https://etcher.balena.io/) and you're done. SHA-256 is in the matching `.sha` file. Continue reading only if you want to rebuild it yourself or understand why it's needed.
+Skip everything below and grab a prebuilt 26.04 image from the [latest release page](https://github.com/mack42/OrangePi5Pro/releases/latest):
+
+- **`*_desktop.img.xz`** (~770 MB) — KDE Plasma + SDDM + HW video decode + `orangepi-setup` auto-prompt baked in. The "just works" option.
+- **`*_minimal.img.xz`** (~300 MB) — CLI only, headless / server use. Run `orangepi-setup` post-boot for Plasma + setup.
+
+Flash with [balenaEtcher](https://etcher.balena.io/) on any OS, or `xz -dc *.img.xz | sudo dd of=/dev/sdX bs=4M status=progress` on Linux/macOS — see [Step 2](#step-2--flash-and-boot-the-2404-image) below for full per-OS commands and the SHA-256 verify step. Continue reading only if you want to rebuild it yourself or understand why it's needed.
+
+## Files in this repo
+
+| File | Purpose |
+|---|---|
+| `01-build-noble.sh` | Builds the 24.04 stepping-stone image. Run on the stock OPi vendor 22.04 system. |
+| `02-build-resolute.sh` | Builds the 26.04 image. Run on the booted noble system. `--desktop` flag bakes Plasma + HW video decode + auto-prompt hook. |
+| `apply-uutils-shim.sh` | Patches Armbian's framework with: (1) deploy uutils→qemu-shim, (2) restore before image creation, (3) rk3588 boot-delay (`rootwait rootdelay=10`). Idempotent. Called automatically by `02-build-resolute.sh`. |
+| `customize-image.sh` | Runs inside the chroot during a `--desktop` build. Installs `kubuntu-desktop`, builds `librockchip-mpp` + `woodyst/rockchip-vaapi` + `libva-utils` from source, drops `/etc/profile.d/orangepi-firstrun.sh` for first-TTY auto-launch of setup. Copied into `framework/userpatches/` by `02-build-resolute.sh --desktop`. |
+| `03-setup.sh` | Post-boot helper. Six prompts: install Plasma / auto-start UI / migrate to NVMe / SPI bootloader / install HW video / fix HDMI overscan. Run as `orangepi-setup` from the desktop image (auto-launched on first login) or `./03-setup.sh` from a clone. Re-runnable. |
+| `README.md` | This file. |
 
 ## Why this is two builds plus a patch
 
@@ -71,16 +87,62 @@ Plus a matching `.txt` build manifest and `.sha` checksum.
 
 ## Step 2 — Flash and boot the 24.04 image
 
-Copy the `.img.xz` to your workstation and flash to a microSD.
+Copy the `.img.xz` to your workstation and flash to a microSD using the instructions for your OS below. **balenaEtcher** is the cross-platform safe choice; it accepts `.img.xz` directly and uses raw DD writes — the only tool I've gotten to produce a bootable card reliably across this whole project.
 
-**On Windows: use [balenaEtcher](https://etcher.balena.io/).** This is the only tool I've gotten to produce a bootable card from this `.img.xz` reliably. Drag the `.img.xz` in, pick the SD, write. Done.
+### Linux
 
-**Avoid Rufus and Raspberry Pi Imager on Windows.** Rufus's ISO/DD detection silently mangles the GPT (the card boots but the kernel sees only the whole-disk device with no partitions). Raspberry Pi Imager wrote a card that wouldn't enumerate the rootfs at the initramfs stage. Both wasted real time during development.
-
-**On Linux**, `dd` directly works fine (it reads `.xz` via pipe):
 ```bash
-xz -dc Armbian-*_noble_*.img.xz | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
+# Identify the SD card device first — DO NOT skip this step or you can wipe a real disk.
+lsblk
+# Look for the card (usually /dev/sda, /dev/sdb, or /dev/mmcblk0). Confirm by size.
+
+# Decompress and write in one pipe (safe for .img.xz):
+xz -dc Armbian-unofficial_*_resolute_current_*.img.xz | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
+sync
 ```
+Replace `sdX` with your card's device. **Triple-check the device** — `dd` will overwrite without warning.
+
+### macOS
+
+Easiest: install [balenaEtcher](https://etcher.balena.io/) (drag in the `.img.xz`, pick the SD, write).
+
+CLI alternative if you prefer Terminal:
+```bash
+# Identify the SD card device:
+diskutil list
+# Look for /dev/diskN where N is the SD card. Confirm by size.
+
+# Unmount (do NOT eject):
+diskutil unmountDisk /dev/diskN
+
+# Write — note the 'r' prefix on rdiskN for raw / faster write:
+xz -dc Armbian-unofficial_*_resolute_current_*.img.xz | sudo dd of=/dev/rdiskN bs=4m status=progress
+
+# Eject when done:
+diskutil eject /dev/diskN
+```
+Replace `diskN`/`rdiskN` with your card's identifier.
+
+### Windows
+
+**Use [balenaEtcher](https://etcher.balena.io/).** Download, install, point at the `.img.xz`, pick the SD, click Flash. Etcher decompresses on the fly and writes raw — works reliably.
+
+**Avoid Rufus and Raspberry Pi Imager on Windows for these images.** During development, Rufus's ISO/DD detection silently mangled the GPT (the card boots but the kernel sees only the whole-disk device, no partitions). Raspberry Pi Imager wrote a card that wouldn't enumerate the rootfs at the initramfs stage. Both wasted real time. balenaEtcher worked first try, every time.
+
+(If you absolutely must use the command line, install [Win32DiskImager](https://sourceforge.net/projects/win32diskimager/) and decompress the `.img.xz` first with [7-Zip](https://www.7-zip.org/), then point Win32DiskImager at the resulting raw `.img`.)
+
+### Verify the SHA-256
+
+The release page ships a matching `.sha` file. Verify before flashing:
+
+```bash
+# Linux / macOS:
+sha256sum -c Armbian-unofficial_*.img.xz.sha   # Linux
+shasum -a 256 -c Armbian-unofficial_*.img.xz.sha   # macOS
+```
+Windows PowerShell: `Get-FileHash Armbian-...img.xz -Algorithm SHA256`. Compare to the value in the `.sha` file.
+
+### Boot
 
 Insert the microSD into the OPi and power-cycle. Don't touch eMMC — your stock 22.04 stays untouched as a fallback. The 5 Pro's u-boot prefers microSD over eMMC.
 
@@ -100,7 +162,8 @@ cd OrangePi5Pro
 # Minimal CLI image (~8-15 min, ~300 MB):
 ./02-build-resolute.sh
 
-# OR — KDE Plasma desktop image (~30-45 min, ~2 GB):
+# OR — KDE Plasma desktop image with HW video decode + auto-prompt baked in
+# (~30-45 min, ~770 MB, all dependencies handled by customize-image.sh):
 ./02-build-resolute.sh --desktop
 ```
 
@@ -124,11 +187,15 @@ sudo umount /mnt && sudo losetup -d "$LOOP"
 
 ## Step 4 — Flash 26.04
 
-Same flashing procedure as Step 2, just point at the resolute `.img.xz`. **balenaEtcher** is the only writer that's reliably worked through this whole project; avoid Rufus and Pi Imager.
+Same flashing procedure as **Step 2** (Linux / macOS / Windows commands above), just point at the resolute `.img.xz`. **balenaEtcher** on Windows; `xz -dc | sudo dd ...` on Linux / macOS Terminal.
 
-## Step 5 — Post-boot setup (Plasma / auto-start UI / NVMe)
+## Step 5 — Post-boot setup (auto-prompts on first login)
 
-The minimal image lands you at a CLI login. The desktop image goes straight to SDDM. Either way, log in and run:
+Both images land you at a **TTY login** (multi-user.target as default — important so `armbian-firstrun` can run cleanly). Set root password, create your user, set timezone/locale.
+
+After firstrun completes, log in as the user you just created. **The desktop image auto-launches `orangepi-setup` on your first interactive TTY login** via `/etc/profile.d/orangepi-firstrun.sh` — no manual steps needed. The hook only runs once per user; re-invoke any time later with `orangepi-setup`.
+
+The minimal image doesn't have the auto-launch hook (and doesn't have Plasma/MPP/etc. to ask about anyway). If you want to add Plasma + HW video to the minimal image post-boot, do it manually:
 
 ```bash
 git clone https://github.com/mack42/OrangePi5Pro.git
@@ -136,7 +203,7 @@ cd OrangePi5Pro
 ./03-setup.sh
 ```
 
-`03-setup.sh` walks through five prompts and applies your answers:
+`03-setup.sh` walks through six prompts and applies your answers:
 
 1. **Install KDE Plasma desktop?** — skipped if already there. Adds ~2 GB.
 2. **Auto-start the UI on boot?** — toggles between `graphical.target` (boots into SDDM/Plasma) and `multi-user.target` (boots to text console).
@@ -173,9 +240,10 @@ This is the most important practical decision and it's why the recipe defaults t
 
 ## Caveats
 
-- The `02-build-resolute.sh` script defaults to a minimal CLI image. Pass `--desktop` for an image with KDE Plasma + SDDM baked in, or use the post-boot `03-setup.sh` to install Plasma after first boot — both reach the same end state.
+- `02-build-resolute.sh` defaults to a minimal CLI image. Pass `--desktop` for an image with KDE Plasma + SDDM + HW video decode baked in, or run `orangepi-setup` (a.k.a. `03-setup.sh`) post-boot from a minimal image — both reach the same end state.
 - Each system's Armbian build cache is independent. The first build on a fresh host pulls a ~2 GB Docker base image and clones a kernel tree (~1-2 GB). Subsequent builds reuse those.
-- HW video decode on mainline 6.18 isn't packaged for resolute aarch64 in apt, but the **`03-setup.sh` step 5** builds it from source: librockchip-mpp + woodyst/rockchip-vaapi land a working VA-API driver that exposes H.264 / HEVC / VP9 / AV1 hardware decode through libva, so Firefox / Brave / mpv can offload video playback to the RK3588 VPU. Verified with `vainfo`: the rockchip driver loads, all four codec families show up. See [issue #1](https://github.com/mack42/OrangePi5Pro/issues/1) for the full investigation.
+- HW video decode on mainline 6.18 isn't packaged in resolute apt; the desktop image build (`customize-image.sh`) compiles `librockchip-mpp` + `woodyst/rockchip-vaapi` + `libva-utils` from source and lands a working VA-API driver. Verified with `vainfo`: the rockchip driver loads, all four codec families (H.264 / HEVC / VP9 / AV1) decode-capable. Firefox / Brave / mpv pick this up automatically once VA-API flags are enabled. See [issue #1](https://github.com/mack42/OrangePi5Pro/issues/1) for the full investigation, including ffmpeg-vaapi limitations.
+- After flashing the desktop image, log in at the TTY (`armbian-firstrun` runs there to set root password / create your user). After firstrun, the next interactive TTY login auto-launches `orangepi-setup` exactly once; from there you opt into Plasma autostart, NVMe migration, etc. Re-invoke any time with `orangepi-setup`.
 
 ## Troubleshooting
 
