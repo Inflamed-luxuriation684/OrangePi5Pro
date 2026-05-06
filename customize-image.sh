@@ -73,29 +73,15 @@ ln -sf /usr/local/share/OrangePi5Pro/03-setup.sh /usr/local/bin/orangepi-setup
 # SSH). Set the flag file FIRST so the hook never re-prompts on subsequent
 # logins, even if the user Ctrl-C's mid-prompt or the script errors out.
 # Re-invoke manually any time with: orangepi-setup
-cat > /etc/profile.d/orangepi-firstrun.sh <<'PROF'
-#!/bin/sh
-case "$(tty 2>/dev/null)" in
-    /dev/tty[0-9]*)
-        if [ "$(id -u)" -ne 0 ] && [ ! -e "$HOME/.opi5pro-setup-done" ]; then
-            # Disable console blanking + DPMS so the user actually sees the
-            # prompts. Otherwise the monitor times out into power-save during
-            # the brief gap after armbian-firstrun completes and the user
-            # thinks the system hung.
-            setterm -blank 0 -powersave off -powerdown 0 2>/dev/null || true
-            touch "$HOME/.opi5pro-setup-done"
-            clear
-            echo "============================================================"
-            echo "  Orange Pi 5 Pro — first-login setup helper"
-            echo "  Re-run later any time with: orangepi-setup"
-            echo "============================================================"
-            sleep 2
-            /usr/local/bin/orangepi-setup || true
-        fi
-        ;;
-esac
-PROF
-chmod +x /etc/profile.d/orangepi-firstrun.sh
+# NOTE: We deliberately do NOT auto-launch orangepi-setup on first login
+# anymore. Earlier auto-launch versions ran the prompts in the gap between
+# armbian-firstrun finishing and the shell becoming interactive — which
+# coincided with the monitor going into DPMS blanking, leaving the user
+# staring at a "_" cursor on a black screen. Confusing and easy to assume
+# the system hung. Instead: motd (below) reminds the user every login
+# until setup is done, and they invoke 'orangepi-setup' themselves at a
+# clean shell prompt. 03-setup.sh disables blanking at its start so the
+# prompts stay visible throughout.
 
 # Belt-and-suspenders: also disable console blanking globally so even non-hook
 # TTYs don't power-save during long-running operations.

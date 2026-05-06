@@ -21,6 +21,12 @@ if [[ "$(id -u)" == "0" ]]; then
     exit 1
 fi
 
+# Disable console blanking + DPMS while we're prompting. Some monitors
+# blank during the slow ones (NVMe migration sub-prompt, HW video build);
+# the cursor stays lit but the prompt text is invisible until the user
+# wiggles the mouse, which is confusing.
+setterm -blank 0 -powersave off -powerdown 0 2>/dev/null || true
+
 ask() {
     # ask "Question?" default(y|n)  -> sets ANSWER to y or n
     local prompt="$1" default="${2:-n}" reply
@@ -221,5 +227,7 @@ fi
 
 echo
 echo "=== Setup complete ==="
+# Mark setup as done so the motd reminder suppresses on next login.
+touch "$HOME/.opi5pro-setup-done"
 echo "If you changed the boot target, migrated to NVMe, installed HW video decode,"
 echo "or changed the framebuffer mode, reboot now: sudo reboot"

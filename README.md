@@ -189,13 +189,27 @@ sudo umount /mnt && sudo losetup -d "$LOOP"
 
 Same flashing procedure as **Step 2** (Linux / macOS / Windows commands above), just point at the resolute `.img.xz`. **balenaEtcher** on Windows; `xz -dc | sudo dd ...` on Linux / macOS Terminal.
 
-## Step 5 — Post-boot setup (auto-prompts on first login)
+## Step 5 — Post-boot setup (run `orangepi-setup`)
 
 Both images land you at a **TTY login** (multi-user.target as default — important so `armbian-firstrun` can run cleanly). Set root password, create your user, set timezone/locale.
 
-After firstrun completes, log in as the user you just created. **The desktop image auto-launches `orangepi-setup` on your first interactive TTY login** via `/etc/profile.d/orangepi-firstrun.sh` — no manual steps needed. The hook only runs once per user; re-invoke any time later with `orangepi-setup`.
+After firstrun finishes, log in as the user you just created. The login banner (motd) shows a reminder telling you to run **`orangepi-setup`** to finish configuration:
 
-The minimal image doesn't have the auto-launch hook (and doesn't have Plasma/MPP/etc. to ask about anyway). If you want to add Plasma + HW video to the minimal image post-boot, do it manually:
+```
++--------------------------------------------------------------------+
+|  Orange Pi 5 Pro — first-time setup not yet completed.             |
+|                                                                    |
+|  Run:    orangepi-setup                                            |
+|                                                                    |
+|  Six prompts: Install/auto-start Plasma, migrate root to NVMe,     |
+|  put u-boot in SPI flash, install hardware video decode, and       |
+|  optionally compensate for HDMI overscan.                          |
++--------------------------------------------------------------------+
+```
+
+Type `orangepi-setup` and answer the prompts. The reminder banner suppresses itself once setup completes (touches `~/.opi5pro-setup-done`).
+
+For the minimal image (which doesn't pre-bake `orangepi-setup`), do it manually:
 
 ```bash
 git clone https://github.com/mack42/OrangePi5Pro.git
@@ -203,7 +217,7 @@ cd OrangePi5Pro
 ./03-setup.sh
 ```
 
-`03-setup.sh` walks through six prompts and applies your answers:
+`03-setup.sh` (a.k.a. `orangepi-setup` on the desktop image) walks through six prompts and applies your answers:
 
 1. **Install KDE Plasma desktop?** — skipped if already there. Adds ~2 GB.
 2. **Auto-start the UI on boot?** — toggles between `graphical.target` (boots into SDDM/Plasma) and `multi-user.target` (boots to text console).
